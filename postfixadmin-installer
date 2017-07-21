@@ -31,14 +31,9 @@ if ( -f "/etc/issue" ) {
 
 my $postfixadminDir = "/var/www/html/postfixadmin";
 
-# Check dovecot availability
-if(availableDovecotVersion() !~ /^2\./){
-  print STDERR "This script will not work on versions of Dovecot other than 2.x (you have ".availableDovecotVersion().")\nExiting.\n";
-  exit 1;
-}
 
 # Config starts here
-our $VERSION = "0.20160423 (Centos 6; Dovecot 2.x)";
+our $VERSION = "0.20170721 (Centos 6; Dovecot 2.x)";
 
 my $f_log = '/tmp/postfixadmin-installer.log';
 my $writeLog = 1;
@@ -66,7 +61,6 @@ GetOptions(
 	'mysqluser=s'      => \$mysqluser,
 	'mysqlpass=s'      => \$mysqlpass,
 	'mysqlhost=s'      => \$mysqlhost,
-	'libmailsender=s'  => \$libmailsender,
 	'fqdn=s'           => \$fqdn,
 	'help|h'           => \$help,
 	'pfa-mysqluser=s'  => \$dbuser,
@@ -214,18 +208,14 @@ $vacationMasterDotCf .= '  flags=Rq user=vacation argv=/var/spool/vacation/vacat
 
 # Packages we depend upon. Remember that the script can't cope with installers that need interaction.
 # Any that do need adding below
-my $packages = "dovecot roundcubemail dovecot-pigeonhole cyrus-sasl-devel cyrus-sasl-sql subversion perl-MailTools perl-MIME-EncWords perl-MIME-Charset perl-Email-Valid perl-Test-Pod perl-TimeDate perl-Mail-Sender perl-Log-Log4perl amavisd-new clamav clamd razor-agents perl-Convert-BinHex ";
+my $packages = "dovecot roundcubemail dovecot-pigeonhole cyrus-sasl-devel cyrus-sasl-sql subversion perl-MailTools perl-MIME-EncWords perl-MIME-Charset perl-Email-Valid perl-Test-Pod perl-TimeDate perl-Mail-Sender perl-Log-Log4perl amavisd-new clamav clamd perl-Convert-BinHex ";
 
 # postfix and mysql-server both require human-interaction to install, so we insist it's done before
 # this script runs. There's probably a more elegant way of doing this. This also forces (or at least
 # encourages) removal of the old mailer first.
 
 my @missingPackages;
-if(system("rpm -V epel-release") != 0) { push(@missingPackages, "epel-release"); }
-
 if(system("rpm -V perl-libwww-perl") != 0) { push(@missingPackages, "perl-libwww-perl"); }
-
-if(system("rpm -V perl-Text-Patch") != 0) { push(@missingPackages, "perl-Text-Patch"); }
 
 if(system("rpm -V mysql-server") != 0) { push(@missingPackages, "mysql-server"); }
 
@@ -468,20 +458,22 @@ sub sasl(){
 # Herein, the first 'print' of any stanza should serve as a reasonable comment on what it's doing
 print "Guessing MySQL credentials...";
 if ( (!$mysqlhost || !$mysqluser )){
-	($mysqlhost, $mysqluser, $mysqlpass) = &getMySQLCredentials();
-	if (!$mysqlpass){
-		printRed("Failed\n");
-		print "\tPlease enter the password for mysql user \'$mysqluser\':\n";
-		system('stty','-echo');
-		chop($mysqlpass=<STDIN>);
-		system('stty','echo');
-	}else{
-		printGreen("Done\n");
-	}
+	print "Please supply a MySQL host and username on the command line\n";
+	exit 1;
+}
+
+if (!$mysqlpass){
+	printRed("Failed\n");
+	print "\tPlease enter the password for mysql user \'$mysqluser\':\n";
+	system('stty','-echo');
+	chop($mysqlpass=<STDIN>);
+	system('stty','echo');
+}else{
+	printGreen("Done\n");
 }
 
 unless($overwrite > 0){
-	print "Testing for existing install...";
+	print "Testing for existing install...\n";
 	if( -d $postfixadminDir ){
 		opendir(my $dh, $postfixadminDir);
 		my $count = 0;
@@ -497,9 +489,10 @@ unless($overwrite > 0){
 }
 
 use Text::Patch;
-start("Patching yum Base repo file to prevent postfix from being replaced by an update");
+start("Patching yum Base repo file to prevent postfix from being replaced by an update\n");
 my $patch = <<'EOF';
-@@ -14,6 +14,7 @@
+@@ -13,16 +13,18 @@
+ [base]
  name=CentOS-$releasever - Base
  mirrorlist=http://mirrorlist.centos.org/?release=$releasever&arch=$basearch&repo=os&infra=$infra
  #baseurl=http://mirror.centos.org/centos/$releasever/os/$basearch/
@@ -507,13 +500,16 @@ my $patch = <<'EOF';
  gpgcheck=1
  gpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-CentOS-6
 
-@@ -22,6 +23,7 @@
+ #released updates
+ [updates]
  name=CentOS-$releasever - Updates
  mirrorlist=http://mirrorlist.centos.org/?release=$releasever&arch=$basearch&repo=updates&infra=$infra
  #baseurl=http://mirror.centos.org/centos/$releasever/updates/$basearch/
 +exclude=postfix
  gpgcheck=1
  gpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-CentOS-6
+
+ #additional packages that may be useful
 EOF
 
 my $orig = "/etc/yum.repos.d/CentOS-Base.repo";
@@ -524,7 +520,6 @@ my $patched;
 open my $fha, '<', $orig or die $!;
 read( $fha, $repo, -s $fha );
 close $fha;
-patcha
 $patched = patch( $repo, $patch, STYLE => "Unified" );
 rename($orig, $backup) or system("mv", $orig, $backup) or die $!;
 open my $fhb, '>', $orig or die $!;
@@ -996,42 +991,6 @@ sub createPassword {
         return $password;
 }
 
-
-sub getMySQLCredentials(){
-	my $f;
-	my ($host,$user,$password);
-	if ( -f "/etc/debian_version"){
-		eval{open ($f, "<", "/etc/debian_version") or die()};
-		if (!$@){
-			my @file = <$f>;
-			if ($file[0] =~ /^5/){
-				# If we're here, we're on a Lenny box, and debian-sys-maint wont
-				# let us grant privileges, so we want to use root.
-				$user = "root";
-				$host = "localhost";
-				$password = undef;
-				return($host,$user,$password);
-			}
-		}
-	}
-	# If we're here, we're on a non-Lenny box which, as far as I've tested, means Squeeze or Lucid.
-	# We therefore just want to get the debian-sys-maint credentials:
-	open (my $f, "<", "/etc/mysql/debian.cnf") or die "Error opening /etc/mysql/debian.cnf for reading. Are you root? Is this Debian?";;
-	while(<$f>){
-		if (/host\s+=\s+(.+)\s+$/){
-			$host = $1;
-		}elsif (/user\s+=\s+(.+)\s+$/){
-			$user = $1;
-		}elsif (/password\s+=\s+(.+)\s+$/){
-			$password = $1;
-		}elsif (/\[mysql_upgrade]/){
-			last;
-		}
-	}
-	close($f);
-	return ($host,$user,$password);
-}
-
 sub backup(){
 	my $from = shift;
 	my $to = shift;
@@ -1118,18 +1077,6 @@ sub _error{
 	chomp $message;
 	print STDERR $message."\n";
 	exit $exit;
-}
-
-sub availableDovecotVersion{
-  foreach(`apt-cache policy $dovecot_package_name`){
-    if($_ =~ /Candidate:\s+(\S+)/){
-      my $version = $1;
-      $version =~ s/^\d+://;
-      return $version;
-    }
-  }
-  print STDERR "Couldn't determine available Dovecot version";
-  return "0";
 }
 
 sub printRed{
