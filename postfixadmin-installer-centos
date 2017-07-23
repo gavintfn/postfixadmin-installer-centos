@@ -86,6 +86,11 @@ unless($fqdn =~ /.+/){
 	$fqdn = `hostname -f`;
 	chomp $fqdn;
 }
+if ( length($fqdn) < 3 ) {
+print "The hostname $fqdn is too short or missing\n";
+exit (1);
+}
+
 
 if($help){
   print <<EOF;
@@ -467,7 +472,7 @@ sub sasl(){
 # Herein, the first 'print' of any stanza should serve as a reasonable comment on what it's doing
 print "Guessing MySQL credentials...";
 if ( (!$mysqlhost || !$mysqluser )){
-	print "Please supply a MySQL host and username on the command line with --mysqlhost and --mysqluser\n";
+	print "Please supply a MySQL host and admin username on the command line with --mysqlhost and --mysqluser\n";
 	exit 1;
 }
 
@@ -959,7 +964,20 @@ if($? != 0){
 }else{
 	printGreen(" done\n");
 }
+foreach my $service ("dovecot", "httpd", "munin-node", "mysqld", "postfix", "saslauthd", "", ""){
+	run("chkconfig $service on && echo \"Turning on the $service service\"");
+	printGreen("Turning on the $service service\n");
+	}
+print "Disabling SELinux, so remember to reboot after setting up the admin user!!\n";
+system("cp -fv /etc/selinux/config /etc/selinux/config.bak");
+system("sed -i s/SELINUX=enforcing/SELINUX=disabled/g /etc/selinux/config");
 
+print "Opening the firewall ports for the services\n";
+foreach my $port ("25", "143", "110", "993", "995", "443", "80", "587"){
+	run("iptables -I INPUT -p tcp -m tcp --dport $port -j ACCEPT");
+	printGreen("Opening port $port\n");
+	}
+run ("service iptables save");
 print "\n\n";
 
 printEndInstructions();
