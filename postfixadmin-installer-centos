@@ -12,7 +12,8 @@
 #
 # Written by Avi (@avi.co) in 2011
 
-#Depends: libwww-perl, (mysql-server|mariadb-server), postfix
+#Depends: mysql-server|mariadb-server), epel-release
+$|=1;
 
 use strict;
 use File::Copy;
@@ -20,6 +21,7 @@ use Cwd;
 use Digest::SHA qw/sha1_hex/;
 use Term::ANSIColor;
 use Getopt::Long qw/:config auto_version/;
+use Cwd;
 
 # Check OS release
 my $pfa_os_release = 'other_noissue';
@@ -180,8 +182,8 @@ my $postfixMainDotCfBackupFile = "/etc/postfix/.bak_${date}_main.cf";
 my $postfixMasterDotCfFile = "/etc/postfix/master.cf";
 my $postfixMasterDotCfBackupFile = "/etc/postfix/.bak_${date}_master.cf";
 
-my $saslauthdFile = "/etc/default/saslauthd";
-my $saslauthdBackupFile = "/etc/default/.bak_${date}_saslauthd";
+my $saslauthdFile = "/etc/sysconfig/saslauthd";
+my $saslauthdBackupFile = "/etc/sysconfig/.bak_${date}_saslauthd";
 
 # This is the dir under which the mailboxes are created, as "/var/lib/vmail/domain/<email-address>/Maildir
 my $mailboxDir = "/var/lib/vmail";
@@ -196,6 +198,8 @@ my $muninActivePluginDir = "/etc/munin/plugins";
 # I assume a group named the same as this. Dovecot and Postfix both do their virtual mailbox related
 # jobs as this user, so the contents of $mailboxDir must be owned by it
 my $unixUser = "vmail";
+my $uidnum = 999;
+my $gidnum = 122;
 
 # We also need a user and group for the vacation message management. Again, we simply create a group
 # of the same name as the user.
@@ -205,39 +209,41 @@ my $vacationDomain = "autoreply.".$fqdn;
 my $vacationMasterDotCf = "vacation  unix  -\tn\tn\t-\t-\tpipe\n";
 $vacationMasterDotCf .= '  flags=Rq user=vacation argv=/var/spool/vacation/vacation.pl -f ${sender} ${recipient}';
 
+my $installdir = cwd();
+print "$installdir\n";
+
 
 # Packages we depend upon. Remember that the script can't cope with installers that need interaction.
 # Any that do need adding below
-my $packages = "dovecot roundcubemail dovecot-pigeonhole cyrus-sasl-devel cyrus-sasl-sql subversion perl-MailTools perl-MIME-EncWords perl-MIME-Charset perl-Email-Valid perl-Test-Pod perl-TimeDate perl-Mail-Sender perl-Log-Log4perl amavisd-new clamav clamd perl-Convert-BinHex ";
+my $packages = "dovecot roundcubemail dovecot-pigeonhole dovecot-mysql cyrus-sasl-devel cyrus-sasl-sql subversion perl-MailTools perl-MIME-EncWords perl-MIME-Charset perl-Email-Valid perl-Test-Pod perl-TimeDate perl-Mail-Sender perl-Log-Log4perl amavisd-new clamav clamd perl-Convert-BinHex wget patch httpd php php-mysql php-pdo php-common php-cli php-gd php-ncurses php-snmp php-mbstring php-mysql php-devel php-imap php-odbc php-pear php-xml php-xmlrpc php-dba php-pear-DB php-process php-pear-DB php-mcrypt munin-node";
 
 # postfix and mysql-server both require human-interaction to install, so we insist it's done before
 # this script runs. There's probably a more elegant way of doing this. This also forces (or at least
 # encourages) removal of the old mailer first.
 
 my @missingPackages;
-if(system("rpm -V perl-libwww-perl") != 0) { push(@missingPackages, "perl-libwww-perl"); }
+if(system("rpm -V epel-release") != 0) { push(@missingPackages, "epel-release"); }
 
 if(system("rpm -V mysql-server") != 0) { push(@missingPackages, "mysql-server"); }
 
-if($#missingPackages > 0){
-	print STDERR "Missing packages: ".join(" ", @missingPackages).". Please install these and retry\n";
+if(scalar(@missingPackages) > 0){
+	print STDERR "Missing packages: ".join(" ", @missingPackages).". Please install these and retry\nYou could try \"yum -y install ".join(" ", @missingPackages)."\"\n";
 	exit 1;
+}
+
+print "Starting mysqld...";
+system("/etc/init.d/mysqld start 2>/dev/null >/dev/null");
+if ($? != 0){
+	printRed(" ERROR\n");
+	exit 1;
+}else{
+	printGreen(" done\n");
 }
 
 my $ignoreBackupFailures = 0;
 
 # For files we've had problems with:
 my @errors;
-
-eval{
-	require LWP::Simple;
-	LWP::Simple->import();
-};
-if($@){
-	print "I need LWP::Simple, install libwww-perl\n";
-	print "(I'll also need postfix and mysql-server, so you might want to check those now, too)\n";
-	exit 1;
-}
 
 #### Postfixadmin-specific config  # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
 
@@ -292,10 +298,13 @@ sub mainDotCf(){
 	return <<EOF;
 
 # # # Begin insertion by postfixdovecotmysql script $date # # #
+# Networking
+mynetworks = 127.0.0.0/8
+inet_interfaces = all
 
 # TLS parameters
-smtpd_tls_cert_file=/etc/ssl/certs/ssl-cert-snakeoil.pem
-smtpd_tls_key_file=/etc/ssl/private/ssl-cert-snakeoil.key
+smtpd_tls_cert_file=/etc/pki/dovecot/certs/dovecot.pem
+smtpd_tls_key_file=/etc/pki/dovecot/private/dovecot.pem
 smtpd_use_tls=yes
 
 virtual_mailbox_domains = proxy:mysql:$postfixDir/mysql_virtual_domains_maps.cf
@@ -349,7 +358,7 @@ connect = host=$dbhost dbname=$dbname user=$dbuser password=$dbpass
 driver = mysql
 default_pass_scheme = MD5-CRYPT
 password_query = SELECT username AS user,password FROM mailbox WHERE username = '%u' AND active='1'
-user_query = SELECT concat('/var/lib/vmail/', maildir) as home, 999 AS uid, 122 AS gid FROM mailbox WHERE username = '%u' and active='1'
+user_query = SELECT concat('/var/lib/vmail/', maildir) as home, $uidnum AS uid, $gidnum AS gid FROM mailbox WHERE username = '%u' and active='1'
 
 EOF
 }
@@ -375,8 +384,8 @@ disable_plaintext_auth = no
 # auth_debug=yes
 
 ssl = yes
-ssl_cert=</etc/ssl/certs/ssl-cert-snakeoil.pem
-ssl_key=</etc/ssl/private/ssl-cert-snakeoil.key
+ssl_cert=</etc/pki/dovecot/certs/dovecot.pem
+ssl_key=</etc/pki/dovecot/private/dovecot.pem
 
 protocol pop3 {
   pop3_uidl_format = %08Xu%08Xv
@@ -458,7 +467,7 @@ sub sasl(){
 # Herein, the first 'print' of any stanza should serve as a reasonable comment on what it's doing
 print "Guessing MySQL credentials...";
 if ( (!$mysqlhost || !$mysqluser )){
-	print "Please supply a MySQL host and username on the command line\n";
+	print "Please supply a MySQL host and username on the command line with --mysqlhost and --mysqluser\n";
 	exit 1;
 }
 
@@ -488,61 +497,41 @@ unless($overwrite > 0){
 	}
 }
 
-use Text::Patch;
 start("Patching yum Base repo file to prevent postfix from being replaced by an update\n");
-my $patch = <<'EOF';
-@@ -13,16 +13,18 @@
- [base]
- name=CentOS-$releasever - Base
- mirrorlist=http://mirrorlist.centos.org/?release=$releasever&arch=$basearch&repo=os&infra=$infra
- #baseurl=http://mirror.centos.org/centos/$releasever/os/$basearch/
-+exclude=postfix
- gpgcheck=1
- gpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-CentOS-6
-
- #released updates
- [updates]
- name=CentOS-$releasever - Updates
- mirrorlist=http://mirrorlist.centos.org/?release=$releasever&arch=$basearch&repo=updates&infra=$infra
- #baseurl=http://mirror.centos.org/centos/$releasever/updates/$basearch/
-+exclude=postfix
- gpgcheck=1
- gpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-CentOS-6
-
- #additional packages that may be useful
-EOF
 
 my $orig = "/etc/yum.repos.d/CentOS-Base.repo";
 my $backup = "/etc/yum.repos.d/CentOS-Base.repo.bakup";
 
-my $repo;
 my $patched;
 open my $fha, '<', $orig or die $!;
-read( $fha, $repo, -s $fha );
+while( my $line = <$fha> ) { # print the lines before the change
+	if (($. == 17) || ($. == 25)) {# line number before change
+		$line =~ s/gpgcheck=1/exclude=postfix\ngpgcheck=1/;
+	}
+	$patched .= $line;
+}
 close $fha;
-$patched = patch( $repo, $patch, STYLE => "Unified" );
 rename($orig, $backup) or system("mv", $orig, $backup) or die $!;
 open my $fhb, '>', $orig or die $!;
 print $fhb $patched;
 close $fhb;
 
 start("Installing Postfix with MySQL support");
-my $cmd = "yum -y --enablerepo=centosplus install postfix";
-if(run($cmd) != 0){
-	fail("postfix");
-	exit 1;
-}else{
-	succeed();
+open(my $install, '-|', 'yum', '-y', '--enablerepo=centosplus', 'install', 'postfix') or die "ERROR RUNNING INSTALL";
+while(<$install>) {
+	print '#';
 }
+print "\n";
+close($install);
 
 start("Installing packages (this can take a few minutes)");
-my $cmd = "yum -y install $packages";
-if(run($cmd) != 0){
-	fail($packages);
-	exit 1;
-}else{
-	succeed();
+open(my $install, "yum -y install $packages |") or die "ERROR RUNNING INSTALL";
+while(<$install>) {
+	print '#';
 }
+print "\n";
+close($install);
+
 
 
 start("Creating user $unixUser in group $unixUser");
@@ -553,13 +542,13 @@ if ( getpwnam($unixUser) =~ /(\d+)/){
 		$gid = $1;
 		_print ("skipping; $unixUser:$unixUser already exist\n");
 	}else{
-		foreach("groupadd $unixUser", "usermod -a -G $unixUser $unixUser"){
+		foreach my $cmd ("groupadd $unixUser", "usermod -a -G $unixUser $unixUser"){
 			run($cmd);
 		}
 	}
 	succeed();
 }else{
-	my $cmd = "useradd -r -d $mailboxDir -s /sbin/nologin -c \"Virtual mailbox\" $unixUser";
+	my $cmd = "groupadd -r --gid $gidnum $unixUser && useradd -r -d $mailboxDir -s /sbin/nologin -g $unixUser -u $uidnum -c \"Virtual mailbox\" $unixUser";
 	if(run($cmd) != 0){
 		fail("useradd exited non-zero");
 	}else{
@@ -757,18 +746,19 @@ if (system("echo \"use $dbname\" | $mysqlconnect 2>/dev/null") == 0){
 }
 
 start("Configuring db");
-if (system("echo \"grant all privileges on $dbname.* to $dbuser identified by \'$dbpass\'\" | $mysqlconnect") == 0){
+if (system("echo \"grant all privileges on $dbname.* to $dbuser\@localhost identified by \'$dbpass\'\" | $mysqlconnect") == 0){
 	succeed();
 }else{
-	fail("'grant all privileges on $dbname.* to $dbuser identified by \'$dbpass\'\\' returned non-zero\n");
+	fail("'grant all privileges on $dbname.* to $dbuser\@localhost identified by \'$dbpass\'\\' returned non-zero\n");
 }
 
 
 start("Getting postfixadmin");
-if(getstore($postfixadminURL, "/var/www/postfixadmin.tar.gz")){
+;
+if(run ("wget -q -O /var/www/postfixadmin.tar.gz $postfixadminURL") == 0) {
 	succeed();
 }else{
-	fail();
+	fail("wget of <$postfixadminURL> failed with an error");
 }
 
 
@@ -909,9 +899,16 @@ succeed();
 
 my $templatesDir = $postfixadminDir."/templates_c";
 start("Setting permissions on smarty templates dir $templatesDir");
-$cmd = "chown www-data $templatesDir && chmod 750 $templatesDir";
+$cmd = "chown apache $templatesDir && chmod 750 $templatesDir";
 if(run($cmd) != 0){
 	fail("Error setting permissions (needs to be writeable-to by the webserver");
+}else{
+	succeed();
+}
+start("Applying patch that seems to be needed on Centos 6");
+$cmd = "cd $postfixadminDir; patch < $installdir/postfixadmin-password-digits.patch";
+if(run($cmd) != 0){
+	fail("Error patching config.inc.php");
 }else{
 	succeed();
 }
@@ -947,7 +944,7 @@ if ($? != 0){
 }
 
 print "Restarting Apache2...";
-system("apache2ctl restart 2>/dev/null > /dev/null");
+system("apachectl restart 2>/dev/null > /dev/null");
 
 if ($? != 0){
 	printRed(" ERROR\n");
