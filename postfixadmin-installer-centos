@@ -118,7 +118,7 @@ usage:
   If none are set, will use the contents of /etc/mysql/debian.cnf to auth with the
   db. If you set a password here you must also set a user.
 
- Set postfixadmin's MySQL details; these are the details PFA will use day-to-day:
+ Set postfixadmin's MySQL details; these are the details PFA will use in it's day-to-day operations:
   --pfa-mysqlhost   host default:
   --pfa-mysqluser   username
   --pfa-mysqlpass   password
@@ -220,7 +220,7 @@ print "$installdir\n";
 
 # Packages we depend upon. Remember that the script can't cope with installers that need interaction.
 # Any that do need adding below
-my $packages = "dovecot roundcubemail dovecot-pigeonhole dovecot-mysql cyrus-sasl-devel cyrus-sasl-sql subversion perl-MailTools perl-MIME-EncWords perl-MIME-Charset perl-Email-Valid perl-Test-Pod perl-TimeDate perl-Mail-Sender perl-Log-Log4perl amavisd-new clamav clamd perl-Convert-BinHex wget patch httpd php php-mysql php-pdo php-common php-cli php-gd php-ncurses php-snmp php-mbstring php-mysql php-devel php-imap php-odbc php-pear php-xml php-xmlrpc php-dba php-pear-DB php-process php-pear-DB php-mcrypt munin-node";
+my $packages = "dovecot roundcubemail dovecot-pigeonhole dovecot-mysql cyrus-sasl-devel cyrus-sasl-sql subversion perl-MailTools perl-MIME-EncWords perl-MIME-Charset perl-Email-Valid perl-Test-Pod perl-TimeDate perl-Mail-Sender perl-Log-Log4perl amavisd-new clamav clamd perl-Convert-BinHex wget patch httpd mod_ssl php php-mysql php-pdo php-common php-cli php-gd php-ncurses php-snmp php-mbstring php-mysql php-devel php-imap php-odbc php-pear php-xml php-xmlrpc php-dba php-pear-DB php-process php-pear-DB php-mcrypt munin-node";
 
 # postfix and mysql-server both require human-interaction to install, so we insist it's done before
 # this script runs. There's probably a more elegant way of doing this. This also forces (or at least
@@ -247,8 +247,6 @@ if ($? != 0){
 
 my $ignoreBackupFailures = 0;
 
-# For files we've had problems with:
-my @errors;
 
 #### Postfixadmin-specific config  # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
 
@@ -374,7 +372,7 @@ EOF
 sub dovecotDotConf(){
 	my $uid = shift;
 	return <<EOF;
-protocols = imap pop3
+protocols = imap pop3 sieve
 log_timestamp = "%Y-%m-%d %H:%M:%S "
 mail_location = maildir:~
 mail_privileged_group = $unixUser
@@ -415,6 +413,42 @@ service auth {
     user = postfix
     group = postfix
   }
+}
+
+service managesieve-login {
+  inet_listener sieve {
+    port = 4190
+  }
+  service_count = 1
+  process_min_avail = 0
+  vsz_limit = 64M
+}
+service managesieve {
+}
+
+protocol sieve {
+  managesieve_max_line_length = 65536
+  managesieve_implementation_string = Dovecot Pigeonhole
+  managesieve_max_compile_errors = 5
+}
+
+lda_mailbox_autocreate = yes
+lda_mailbox_autosubscribe = yes
+
+protocol lda {
+  mail_plugins = quota sieve
+  postmaster_address = postmaster\@your-domain.tld
+}
+
+protocol imap {
+  mail_plugins = quota imap_quota
+  imap_client_workarounds = delay-newmail
+}
+
+lmtp_save_to_detail_mailbox = yes
+
+protocol lmtp {
+  mail_plugins = sieve
 }
 EOF
 }
@@ -485,6 +519,13 @@ if (!$mysqlpass){
 }else{
 	printGreen("Done\n");
 }
+print "Checking MySQL credentials...";
+if (system("mysql -u root -p$mysqlpass  -e \";\"") == 0){
+		printGreen("Done\n");
+	}else{
+		fail("MySQL credentials did not work\n");
+		exit 1;
+	};
 
 unless($overwrite > 0){
 	print "Testing for existing install...\n";
@@ -809,31 +850,31 @@ foreach(@config){
 	}elsif($line =~ /^\$CONF\[\'domain_path\'/){
 		$line = "\$CONF[\'domain_path\'] = \'YES\';\n";
 
-	}elsif($line =~/^\$CONF\[\'domain_in_mailbox\'/){
+	}elsif($line =~ /^\$CONF\[\'domain_in_mailbox\'/){
 		$line = "\$CONF[\'domain_in_mailbox\'] = \'NO\';\n";
 
-	}elsif($line =~/^\$CONF\[\'aliases\'/){
+	}elsif($line =~ /^\$CONF\[\'aliases\'/){
 		$line = "\$CONF[\'aliases\'] = \'0\';\n";
 
-	}elsif($line =~/^\$CONF\[\'mailboxes\'/){
+	}elsif($line =~ /^\$CONF\[\'mailboxes\'/){
 		$line = "\$CONF[\'mailboxes\'] = \'0\';\n";
 
-	}elsif($line =~/^\$CONF\[\'maxquota\'/){
+	}elsif($line =~ /^\$CONF\[\'maxquota\'/){
 		$line = "\$CONF[\'maxquota\'] = \'0\';\n";
 
-	}elsif($line =~/^\$CONF\[\'postfix_admin_url\'/){
+	}elsif($line =~ /^\$CONF\[\'postfix_admin_url\'/){
 		$line = "\$CONF[\'postfix_admin_url\'] = \'http://$fqdn/postfixadmin\';\n";
 
-	}elsif($line =~/^\$CONF\[\'user_footer_link\'/){
+	}elsif($line =~ /^\$CONF\[\'user_footer_link\'/){
 		$line = "\$CONF[\'user_footer_link\'] = \'http://$fqdn/postfixadmin/users/main.php';\n";
 
-	}elsif($line =~/^\$CONF\[\'user_footer_link\'/){
+	}elsif($line =~ /^\$CONF\[\'user_footer_link\'/){
 		$line = "\$CONF[\'user_footer_link\'] = \'http://$fqdn/postfixadmin/users/main.php';\n";
 
-	}elsif($line =~/^\$CONF\[\'user_footer_link\'/){
+	}elsif($line =~ /^\$CONF\[\'user_footer_link\'/){
 		$line = "\$CONF[\'user_footer_link\'] = \'http://$fqdn/postfixadmin/users/main.php';\n";
 
-	}elsif($line =~/^\$CONF\[\'user_footer_link\'/){
+	}elsif($line =~ /^\$CONF\[\'user_footer_link\'/){
 		$line = "\$CONF[\'user_footer_link\'] = \'http://$fqdn/postfixadmin/users/main.php';\n";
 	}
 
@@ -918,6 +959,65 @@ if(run($cmd) != 0){
 	succeed();
 }
 
+# Roundcube config start
+# ---------------------------------------------------------------------------------------------
+my $dbuser = "roundcube";
+my $dbhost = "localhost";
+my $dbname = "roundcubemail";
+my $dbpass = createPassword(25);
+chomp $dbpass;
+
+my $file1 = "/etc/roundcubemail/config.inc.php.sample";
+my $file2 = "/etc/roundcubemail/config.inc.php";
+
+start("Creating Roundcube db");
+
+if (system("echo \"use $dbname\" | $mysqlconnect 2>/dev/null") == 0){
+	print "skip; db already exists\n";
+}else{
+	if(system("echo \"create database $dbname\" | $mysqlconnect") == 0){
+		succeed();
+	}else{
+		fail("'create database $dbname' returned non-zero");
+	}
+}
+
+start("Configuring Roundcube db");
+if (system("echo \"grant all privileges on $dbname.* to $dbuser\@localhost identified by \'$dbpass\'\" | $mysqlconnect") == 0){
+	succeed();
+}else{
+	fail("'grant all privileges on $dbname.* to $dbuser\@localhost identified by \'$dbpass\'\\' returned non-zero\n");
+}
+
+
+start("Configuring Roundcube");
+open (FILE1,"$file1");
+open (FILE2,">$file2");
+read( FILE1, my $file, -s FILE1 );
+close (FILE1);
+my %changes = (
+    '[\'smtp_server\'] = \'\'' => '[\'smtp_server\'] = \'localhost\'',
+    '\'zipdownload\',' => "'zipdownload',\n\t'managesieve',",
+    'pass@localhost' => "$dbpass\@localhost",
+);
+
+foreach my $key (keys %changes) {
+    # Do some processing on $key and $table{$key}
+    print "Key is $key and value is $changes{$key}\n";
+    $file =~ s/\Q$key/$changes{$key}/g;
+}
+
+$file .= "\n\n\$config['force_https'] = true;\n";
+$file .= "\n\$config['quota_zero_as_unlimited'] = true;\n";
+$file .= "\n\$config['enable_installer'] = true;\n";
+
+print FILE2 $file;
+close (FILE2);
+
+succeed();
+
+# Roundcube config end
+# ---------------------------------------------------------------------------------------------
 
 print "\n\n";
 print "\tRESTARTING SERVICES\n";
@@ -948,6 +1048,11 @@ if ($? != 0){
 	printGreen(" done\n");
 }
 
+start("Setting a time zone in php.ini (Remember to change it to your local one)\n");
+system("cp -fv /etc/php.ini /etc/php.ini.bak");
+system("sed -i 's/;date.timezone =/date.timezone = Europe\\/London/g' /etc/php.ini");
+succeed();
+
 print "Restarting Apache2...";
 system("apachectl restart 2>/dev/null > /dev/null");
 
@@ -958,7 +1063,7 @@ if ($? != 0){
 }
 
 print "Restarting Munin...";
-system("/etc/init.d/munin-node restart");
+system("/etc/init.d/munin-node restart 2>/dev/null > /dev/null");
 if($? != 0){
 	printRed(" ERROR\n");
 }else{
