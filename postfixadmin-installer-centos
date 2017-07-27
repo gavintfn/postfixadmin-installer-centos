@@ -876,6 +876,8 @@ foreach(@config){
 
 	}elsif($line =~ /^\$CONF\[\'user_footer_link\'/){
 		$line = "\$CONF[\'user_footer_link\'] = \'http://$fqdn/postfixadmin/users/main.php';\n";
+	}elsif($line =~ /=> \'password_no_digits 2\'/){
+		$line = "#    '/([0-9].*){2}/'        => 'password_no_digits 2',      # must contain at least 2 digits\n";
 	}
 
 	$line =~ s/change-this-to-your.domain.tld/$fqdn/g;
@@ -948,13 +950,6 @@ start("Setting permissions on smarty templates dir $templatesDir");
 $cmd = "chown apache $templatesDir && chmod 750 $templatesDir";
 if(run($cmd) != 0){
 	fail("Error setting permissions (needs to be writeable-to by the webserver");
-}else{
-	succeed();
-}
-start("Applying patch that seems to be needed on Centos 6");
-$cmd = "cd $postfixadminDir; patch < $installdir/postfixadmin-password-digits.patch";
-if(run($cmd) != 0){
-	fail("Error patching config.inc.php");
 }else{
 	succeed();
 }
