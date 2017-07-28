@@ -10,10 +10,10 @@ Installation
 ------------
 
 Just download and run as root:
-    yum -y install perl-Digest-SHA (if you are running Centos 6 minimal install)
-    yum -y install epel-release mysql-server
-    GET https://raw.github.com/BigRedS/postfixadmin-installer/master/postfixadmin-installer > postfixadmin-installer
-    perl ./postfixadmin-installer
+* yum -y install perl-Digest-SHA wget (if you are running Centos 6 minimal install)
+* yum -y install epel-release mysql-server
+* wget -O- https://raw.githubusercontent.com/macpczone/postfixadmin-installer-centos/master/postfixadmin-installer-centos > postfixadmin-installer-centos
+* perl ./postfixadmin-installer-centos
 
 You will be prompted for MySQL credentials at the beginning.
  At the end of the script you will be given the

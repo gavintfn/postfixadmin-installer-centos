@@ -1,4 +1,4 @@
-#! /usr/bin/perl
+#! /usr/bin/perl -w
 
 # Postfixadmin-installer
 
@@ -42,7 +42,7 @@ my $writeLog = 1;
 my $mysqlhost = undef;
 my $mysqluser = undef;
 my $mysqlpass = undef;
-my $fqdn;
+my $fqdn = "";
 my $help;
 my $overwrite = 0;
 my $colour=1;
@@ -571,7 +571,7 @@ print "\n";
 close($install);
 
 start("Installing packages (this can take a few minutes)");
-open(my $install, "yum -y install $packages |") or die "ERROR RUNNING INSTALL";
+open($install, "yum -y install $packages |") or die "ERROR RUNNING INSTALL";
 while(<$install>) {
 	print '#';
 }
@@ -683,7 +683,7 @@ if($write == 1){
 
 # dovecot.conf
 start("Backing up $dovecotDotConfFile to $dovecotDotConfBackupFile");
-my $write = &backup($dovecotDotConfFile, $dovecotDotConfBackupFile);
+$write = &backup($dovecotDotConfFile, $dovecotDotConfBackupFile);
 if ($write == 1){
 	print "Replacing $dovecotDotConfFile ...";
 	my $f;
@@ -823,7 +823,7 @@ if ( -d $postfixadminDir){
 
 
 start("Configuring postfixadmin");
-open (my $f, "<", $postfixadminDir."/config.inc.php") or die "Error opening postifixadmin's config.inc.php";
+open ($f, "<", $postfixadminDir."/config.inc.php") or die "Error opening postifixadmin's config.inc.php";
 my @config = <$f>;
 close $f;
 my @newconfig;
@@ -886,7 +886,7 @@ foreach(@config){
 }
 
 
-open (my $f, ">", $postfixadminDir."/config.inc.php") or die "Error opening postfixadmin's config.inc.php for writing";
+open ($f, ">", $postfixadminDir."/config.inc.php") or die "Error opening postfixadmin's config.inc.php for writing";
 print $f join("", @newconfig);
 close($f);
 succeed();
@@ -911,10 +911,10 @@ if (run($cmd) != 0){
 
 start("Configuring vacation script");
 my $script = $vacationSpool."/vacation.pl";
-open(my $f, "<", $script);
-my @config = <$f>;
+open($f, "<", $script);
+@config = <$f>;
 close($f);
-my @newconfig;
+@newconfig = ();
 foreach my $line (@config){
 	if ($line =~ /our \$db_type =/){
 		$line = "our \$db_type = 'mysql';";
@@ -932,7 +932,7 @@ foreach my $line (@config){
 	}
 	push(@newconfig,$line);
 }
-open(my $f, ">", $script) or die "Error opening vacation script \"$script\" for writing : $!\n";
+open($f, ">", $script) or die "Error opening vacation script \"$script\" for writing : $!\n";
 print $f join("", @newconfig);
 close($f);
 succeed();
@@ -956,10 +956,10 @@ if(run($cmd) != 0){
 
 # Roundcube config start
 # ---------------------------------------------------------------------------------------------
-my $dbuser = "roundcube";
-my $dbhost = "localhost";
-my $dbname = "roundcubemail";
-my $dbpass = createPassword(25);
+$dbuser = "roundcube";
+$dbhost = "localhost";
+$dbname = "roundcubemail";
+$dbpass = createPassword(25);
 chomp $dbpass;
 
 my $file1 = "/etc/roundcubemail/config.inc.php.sample";
@@ -1165,7 +1165,7 @@ sub run{
 	_log("Command: $cmd");
 	$cmd.=" 2>&1 >> $f_log";
 	my $return =  system($cmd);
-	succeed() if $return = 0;
+	succeed() if $return == 0;
 	fail() if $return != 0;
 	return $return;
 }
